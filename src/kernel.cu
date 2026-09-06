@@ -518,18 +518,18 @@ __global__ void kernUpdateVelNeighborSearchScattered(
           glm::vec3 offset = pos[otherIndex] - selfPos;
           float distance = glm::length(offset);
 
-          // Rule 1: move toward nearby boids' center.
+          // Rule 1
           if (distance < rule1Distance) {
             perceivedCenter += pos[otherIndex];
             ++rule1NeighborCount;
           }
 
-          // Rule 2: move away from very close boids.
+          // Rule 2
           if (distance < rule2Distance) {
             separation -= offset;
           }
 
-          // Rule 3: match nearby boids' velocities.
+          // Rule 3
           if (distance < rule3Distance) {
             perceivedVelocity += vel1[otherIndex];
             ++rule3NeighborCount;
