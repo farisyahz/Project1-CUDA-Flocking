@@ -1,8 +1,10 @@
 # CUDA Flocking
 
-**University of Pennsylvania · CIS 5650: GPU Programming and Architecture · Project 1**
+**University of Pennsylvania, CIS 5650: GPU Programming and Architecture, Project 1 - Flocking**
 
-**Faris Rafie Syahzani**
+- Faris Rafie Syahzani
+- Tested on: Windows 11, AMD Ryzen 7 8845HS, NVIDIA GeForce RTX 4050
+  Laptop GPU (6 GB), 16 GB RAM
 
 ![CUDA boids simulation](images/boids-segregated.gif)
 
@@ -75,9 +77,13 @@ GPU time per complete simulation step.
 Application FPS contains fixed window and interop costs, so its ordering can
 differ from GPU-only time when simulation kernels are short.
 
-### Scaling with boid count
+### How boid count affects each implementation
 
 ![Application FPS versus boid count](images/performance/boid_scaling_fps.png)
+
+The left panel reports simulation-only FPS with visualization disabled; the
+right panel reports FPS with visualization enabled. Both panels compare naive,
+scattered-grid, and coherent-grid implementations as the boid count increases.
 
 ![GPU simulation time versus boid count](images/performance/boid_scaling_gpu_time.png)
 
@@ -106,7 +112,7 @@ at high `N` because simulation already dominates its frame time. At 20,000
 boids, visualization-on performance is 75 FPS naive, 828 FPS scattered, and 865
 FPS coherent.
 
-### Block size and block count
+### How block size and block count affect each implementation
 
 ![Block-size sweep](images/performance/block_size.png)
 
@@ -124,11 +130,13 @@ threads, naive slowed by 46% and scattered by 24% relative to their minima,
 while coherent changed by less than 1%. A block size of 128 is a reasonable
 cross-implementation default on this GPU.
 
-### Coherent versus scattered storage
+### Did coherent storage improve performance?
 
 ![Grid-step stage breakdown](images/performance/grid_stage_breakdown.png)
 
-Coherent storage pays an additional shuffle, so it is not automatically faster.
+Yes, coherent storage improved performance once the population was large enough,
+which was the expected outcome. It pays an additional shuffle, so it is not
+automatically faster at small populations.
 Scattered GPU time is 11–19% lower from 1,000 through 5,000 boids. Coherent then
 becomes 7% faster at 10,000, 11% at 20,000, 35% at 50,000, and **67% at
 100,000** (0.501 versus 1.519 ms).
@@ -140,11 +148,12 @@ neighbor reads become increasingly valuable as cells supply more particle data.
 Stage timings are used for attribution; their extra event synchronization means
 their sum is not expected to match the batched whole-step measurement exactly.
 
-### Cell width: roughly 27 versus 8 cells
+### Did cell width and checking 27 versus 8 cells affect performance?
 
 ![Cell-width comparison](images/performance/cell_width.png)
 
-Cell width `R = 5` generally intersects about 27 cells, while width `2R = 10`
+Yes, cell width affected performance, but the faster choice changed with boid
+density. Cell width `R = 5` generally intersects about 27 cells, while width `2R = 10`
 generally intersects about eight. The exact range varies near cell and domain
 boundaries.
 
@@ -220,3 +229,24 @@ included.
 
 Timing methodology follows NVIDIA's [CUDA C++ Best Practices Guide](https://docs.nvidia.com/cuda/cuda-c-best-practices-guide/index.html#timing),
 and frame presentation follows GLFW's [swap-interval behavior](https://www.glfw.org/docs/latest/window.html#buffer_swap).
+
+## Blooper: boids going away
+
+![Boids flying away after an incorrect cohesion rule](images/boid-going-away.gif)
+
+An early version of the cohesion rule used the perceived center as a velocity
+change directly:
+
+```cpp
+return percieved_center * rule1Scale;
+```
+
+The rule needs the direction from the current boid to that center:
+
+```cpp
+return (percieved_center - pos[iSelf]) * rule1Scale;
+```
+
+Without subtracting the boid's own position, the code treats an absolute world
+position as a direction. The resulting incorrect steering made the flock fly
+away, producing the animation above.
