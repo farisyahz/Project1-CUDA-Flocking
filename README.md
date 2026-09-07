@@ -8,6 +8,8 @@
 
 ![CUDA boids simulation](images/boids-preview.gif)
 
+*100,000 boids under the coherent uniform grid. Color encodes velocity direction, so a patch of one color is a group of boids that has agreed on where it is going.*
+
 ![CUDA boids simulation preview](images/boids-preview-img.png)
 
 This project implements Reynolds-style flocking on the GPU. Each boid combines
