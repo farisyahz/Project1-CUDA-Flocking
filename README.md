@@ -31,42 +31,28 @@ time step.
   owned cell reuse those tiles instead of repeatedly reading them from global
   memory.
 
-## Test system and methodology
+## Test setup and methodology
 
-All measurements used a CMake **Release** build on:
+I ran every benchmark in **Release** mode on the laptop listed above, with the
+laptop plugged in and V-sync disabled. Before recording a result, I let the
+simulation warm up. I also kept the random seed, time step, and number of
+measured simulation steps the same so each implementation saw a similar flock.
 
-- Windows 11 Home Single Language
-- AMD Ryzen 7 8845HS with Radeon 780M Graphics
-- NVIDIA GeForce RTX 4050 Laptop GPU with 6 GB VRAM
-- 16 GB system RAM
-- NVIDIA driver 616.56 and CUDA Toolkit 13.3
+The main results are averages of five runs. Smaller exploratory and extra-credit
+tests use three to five runs, and the error bars show how much the runs varied.
+This is more repeatable than manually copying a single FPS value from the window
+title.
 
-The laptop was connected to AC power. V-sync was disabled, and measured rates
-above 60 FPS confirmed that no frame cap was active. Each configuration used
-`dt = 0.2`, the same initialization seed, 64 discarded first-use steps, 100
-warm-up steps, and 600 measured steps. I ran five trials per primary data point
-and three to five trials for exploratory and extra-credit comparisons. Case order
-was randomized between rounds to distribute clock and thermal effects. Error
-bars show one sample standard deviation.
+I used two measurements:
 
-The plots use evenly spaced labels for the measured configurations instead of
-logarithmic axes. Every plot states whether higher or lower is better, prints the
-measured values beside the data, and uses the colorblind-friendly Okabe-Ito
-palette.
+- **FPS** measures the experience of running the whole application, including
+  visualization when it is enabled.
+- **CUDA event time** measures only a complete GPU simulation step, which makes
+  it easier to compare the CUDA implementations without rendering getting in
+  the way.
 
-I recorded two complementary measurements:
-
-1. **Application FPS** used a monotonic CPU clock around complete frames. It
-   includes event polling, CUDA/OpenGL interop, simulation, synchronization,
-   and optional rendering and presentation.
-2. **GPU step time** used CUDA events around batches of complete simulation
-   steps. It includes grid indexing, sorting, cell-range construction, coherent
-   shuffling, neighbor search, and integration, while excluding rendering.
-
-Wall-clock and CUDA-event measurements used separate replays beginning from the
-same initialized state. Measuring a fixed number of steps also controls
-simulation age: a fixed-duration test would let faster implementations advance
-further and encounter a different neighbor distribution.
+The graphs use simple, evenly spaced labels, print the values directly, and say
+whether higher or lower is better. They also use a colorblind-friendly palette.
 
 ## Results overview
 
