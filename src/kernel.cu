@@ -706,12 +706,9 @@ __global__ void kernUpdateVelNeighborSearchCoherentShared(
       int rule1NeighborCount = 0;
       int rule3NeighborCount = 0;
 
-      for (int z = imax(0, cellZ - 1);
-           z <= imin(gridResolution - 1, cellZ + 1); ++z) {
-        for (int y = imax(0, cellY - 1);
-             y <= imin(gridResolution - 1, cellY + 1); ++y) {
-          for (int x = imax(0, cellX - 1);
-               x <= imin(gridResolution - 1, cellX + 1); ++x) {
+      for (int z = imax(0, cellZ - 1); z <= imin(gridResolution - 1, cellZ + 1); ++z) {
+        for (int y = imax(0, cellY - 1); y <= imin(gridResolution - 1, cellY + 1); ++y) {
+          for (int x = imax(0, cellX - 1); x <= imin(gridResolution - 1, cellX + 1); ++x) {
             const int neighborCell =
                 gridIndex3Dto1D(x, y, z, gridResolution);
             const int start = gridCellStartIndices[neighborCell];
