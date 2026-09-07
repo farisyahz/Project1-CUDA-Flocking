@@ -51,9 +51,6 @@ I used two measurements:
   it easier to compare the CUDA implementations without rendering getting in
   the way.
 
-The graphs use simple, evenly spaced labels, print the values directly, and say
-whether higher or lower is better. They also use a colorblind-friendly palette.
-
 ## Results overview
 
 This table reports the mean of five Release-mode trials for visualization-off
@@ -129,6 +126,10 @@ cross-implementation default on this GPU.
 
 ![Grid-step stage breakdown](images/performance/grid_stage_breakdown.png)
 
+*GPU-stage breakdown for 100,000 boids. Each colored section shows the time
+spent indexing, sorting, resetting cell ranges, shuffling data, searching for
+neighbors, or updating positions. A shorter total bar is better.*
+
 Yes, coherent storage improved performance once the population was large enough,
 which was the expected outcome. It pays an additional shuffle, so it is not
 automatically faster at small populations.
@@ -163,7 +164,7 @@ The performance difference therefore depends on candidate boids, occupancy,
 memory locality, and grid maintenance, not only the number of cells visited.
 Eight coarse cells can contain more candidates than 27 narrow cells.
 
-### Adaptive grid-looping extra credit
+### Adaptive grid-looping
 
 ![Adaptive grid traversal](images/performance/grid_looping.png)
 
@@ -174,7 +175,7 @@ scattered / 1.08× coherent** at 20,000 and **2.65× / 1.43×** at 100,000. The
 larger scattered benefit follows from its more expensive indirect candidate
 reads. Both paths clamp their ranges at domain boundaries.
 
-### Shared-memory optimization extra credit
+### Shared-memory optimization
 
 ![Shared-memory speedup for spread-out and dense flocks](images/performance/shared_memory.png)
 
