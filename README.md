@@ -6,9 +6,9 @@
 - Tested on: Windows 11, AMD Ryzen 7 8845HS, NVIDIA GeForce RTX 4050
   Laptop GPU (6 GB), 16 GB RAM
 
-![CUDA boids simulation](images/boids-segregated.gif)
+![CUDA boids simulation](images/boids-preview.gif)
 
-![Coherent-grid simulation with 10,000 boids](images/boids.png)
+![CUDA boids simulation preview](images/boids-preview-img.png)
 
 This project implements Reynolds-style flocking on the GPU. Each boid combines
 cohesion, separation, and alignment before integrating its position with a fixed
@@ -26,6 +26,10 @@ time step.
 - **Adaptive grid traversal:** each boid computes the minimum and maximum cell
   coordinates touched by the largest rule radius. This avoids a hard-coded
   neighborhood and is included as the grid-looping extra credit.
+- **Shared-memory coherent grid:** one CUDA block owns a grid cell and loads
+  neighboring positions and velocities into shared-memory tiles. Boids in the
+  owned cell reuse those tiles instead of repeatedly reading them from global
+  memory.
 
 ## Test system and methodology
 
@@ -41,8 +45,14 @@ The laptop was connected to AC power. V-sync was disabled, and measured rates
 above 60 FPS confirmed that no frame cap was active. Each configuration used
 `dt = 0.2`, the same initialization seed, 64 discarded first-use steps, 100
 warm-up steps, and 600 measured steps. I ran five trials per primary data point
-and randomized case order between rounds to distribute clock and thermal effects.
-Plot error bars show one sample standard deviation.
+and three to five trials for exploratory and extra-credit comparisons. Case order
+was randomized between rounds to distribute clock and thermal effects. Error
+bars show one sample standard deviation.
+
+The plots use evenly spaced labels for the measured configurations instead of
+logarithmic axes. Every plot states whether higher or lower is better, prints the
+measured values beside the data, and uses the colorblind-friendly Okabe-Ito
+palette.
 
 I recorded two complementary measurements:
 
@@ -60,9 +70,8 @@ further and encounter a different neighbor distribution.
 
 ## Results overview
 
-The complete study contained **547 successful Release-mode trials** across 125
-configurations. This table reports mean visualization-off application FPS and
-GPU time per complete simulation step.
+This table reports the mean of five Release-mode trials for visualization-off
+application FPS and GPU time per complete simulation step.
 
 | Boids | Naive FPS / GPU ms | Scattered FPS / GPU ms | Coherent FPS / GPU ms |
 |---:|---:|---:|---:|
@@ -179,6 +188,29 @@ scattered / 1.08× coherent** at 20,000 and **2.65× / 1.43×** at 100,000. The
 larger scattered benefit follows from its more expensive indirect candidate
 reads. Both paths clamp their ranges at domain boundaries.
 
+### Shared-memory optimization extra credit
+
+![Shared-memory speedup for spread-out and dense flocks](images/performance/shared_memory.png)
+
+The shared-memory kernel assigns one block to each occupied source cell. Threads
+cooperatively load a neighboring cell's positions and velocities into shared
+memory, synchronize, and reuse that tile for every active boid in the source
+cell. Cells larger than one block are processed in batches. This reduces
+repeated global-memory reads without changing the flocking rules.
+
+I compared it against a matched cell-owned control kernel with the same 27-cell
+traversal, arithmetic, block size, and input state; the only experimental change
+was whether candidate data came directly from global memory or from a shared
+tile. Each point is the mean of five fixed-state CUDA-event replays.
+
+Shared memory is beneficial when there is enough reuse. For a dense flock, it is
+**1.11× faster at 20,000 boids, 1.14× at 50,000, and 1.21× at 100,000**. For the
+spread-out input it reaches only 0.94×, 0.94×, and 0.82× of the control's speed.
+Sparse cells leave many block lanes inactive, so tile loads and two barriers per
+tile cost more than the few global reads they replace. Dense cells amortize that
+overhead across many boids. Shared memory is therefore an optimization for high
+cell occupancy rather than an unconditional improvement.
+
 ### Simulation age and seed sensitivity
 
 ![Simulation-age experiment](images/performance/simulation_age.png)
@@ -200,12 +232,12 @@ sample is not a repeatable benchmark.
 
 ## Correctness
 
-During analysis, I compared the scattered, coherent, and adaptive grid results
-against the brute-force implementation across sparse and dense inputs, cell
-widths `R` and `2R`, non-warp-aligned populations, domain edges, and exact rule
-boundaries. The maximum absolute component error was `1.8e-6`. Repeated fixed
-configurations were deterministic, and NVIDIA Compute Sanitizer reported zero
-memory errors.
+During analysis, I compared the scattered, coherent, adaptive, and shared-memory
+grid results against the brute-force implementation across sparse and dense
+inputs, cell widths `R` and `2R`, non-warp-aligned populations, domain edges,
+and exact rule boundaries. The maximum absolute component error was `1.8e-6`.
+Repeated fixed configurations were deterministic, and NVIDIA Compute Sanitizer
+reported zero memory errors.
 
 ## Build and run
 
@@ -215,9 +247,11 @@ cmake --build build --config Release
 .\build\bin\Release\cis5650_boids.exe
 ```
 
-The checked-in configuration launches the coherent uniform-grid implementation
-with visualization enabled and 5,000 boids. Change `VISUALIZE`, `UNIFORM_GRID`,
-`COHERENT_GRID`, `N_FOR_VIS`, and `blockSize` in the source for custom runs.
+The checked-in configuration launches the shared-memory coherent-grid
+implementation with visualization enabled and 100,000 boids. Set
+`SHARED_MEMORY_GRID` to `0` to use the standard coherent-grid kernel. Change
+`VISUALIZE`, `UNIFORM_GRID`, `COHERENT_GRID`, `N_FOR_VIS`, and `blockSize` for
+other configurations.
 
 Mouse drag rotates the camera, right-drag zooms, and Escape closes the window.
 

@@ -25,9 +25,10 @@
 #define VISUALIZE 1
 #define UNIFORM_GRID 1
 #define COHERENT_GRID 1
+#define SHARED_MEMORY_GRID 1
 
 // LOOK-1.2 - change this to adjust particle count in the simulation
-const int N_FOR_VIS = 20000;
+const int N_FOR_VIS = 100000;
 const float DT = 0.2f;
 
 /**
@@ -205,7 +206,9 @@ void initShaders(GLuint * program) {
     cudaGLMapBufferObject((void**)&dptrVertVelocities, boidVBO_velocities);
 
     // execute the kernel
-    #if UNIFORM_GRID && COHERENT_GRID
+    #if UNIFORM_GRID && COHERENT_GRID && SHARED_MEMORY_GRID
+    Boids::stepSimulationCoherentGridShared(DT);
+    #elif UNIFORM_GRID && COHERENT_GRID
     Boids::stepSimulationCoherentGrid(DT);
     #elif UNIFORM_GRID
     Boids::stepSimulationScatteredGrid(DT);

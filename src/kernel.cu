@@ -185,9 +185,7 @@ void Boids::initSimulation(int N) {
   gridCellCount = gridSideCount * gridSideCount * gridSideCount;
   gridInverseCellWidth = 1.0f / gridCellWidth;
   float halfGridWidth = gridCellWidth * halfSideCount;
-  gridMinimum.x -= halfGridWidth;
-  gridMinimum.y -= halfGridWidth;
-  gridMinimum.z -= halfGridWidth;
+  gridMinimum = glm::vec3(-halfGridWidth);
 
   // TODO-2.1 TODO-2.3 - Allocate additional buffers here.
   cudaMalloc((void**) &dev_particleArrayIndices, N * sizeof(int)); // boids i points to the index of the val & pos -> we have to initialize with 0, 1, 2, 3, etc
@@ -666,6 +664,124 @@ __global__ void kernUpdateVelNeighborSearchCoherent(
   vel2[index] = newVelocity;
 }
 
+/**
+ * Shared-memory coherent-grid neighbor search.
+ *
+ * One block owns a grid cell. The block cooperatively loads neighboring boids
+ * into shared-memory tiles, so every boid in the owned cell reuses the same
+ * position and velocity reads. A full 3x3x3 neighborhood is required because
+ * boids in the owned cell can sit on different sides of its center.
+ */
+__global__ void kernUpdateVelNeighborSearchCoherentShared(
+    int gridResolution, int cellCount,
+    const int *gridCellStartIndices, const int *gridCellEndIndices,
+    const glm::vec3 *pos, const glm::vec3 *vel1, glm::vec3 *vel2) {
+
+  extern __shared__ float sharedStorage[];
+  float3 *sharedPos = reinterpret_cast<float3 *>(sharedStorage);
+  float3 *sharedVel = sharedPos + blockDim.x;
+
+  // A grid-stride loop avoids launching tens of thousands of mostly empty
+  // blocks when the uniform grid is sparse.
+  for (int cell = blockIdx.x; cell < cellCount; cell += gridDim.x) {
+    const int ownStart = gridCellStartIndices[cell];
+    const int ownEnd = gridCellEndIndices[cell];
+    if (ownStart < 0 || ownEnd < 0) continue;
+
+    const int cellX = cell % gridResolution;
+    const int cellY = (cell / gridResolution) % gridResolution;
+    const int cellZ = cell / (gridResolution * gridResolution);
+
+    // Process cells larger than one CUDA block in consecutive batches. Every
+    // thread participates in the barriers, including inactive lanes.
+    for (int batchStart = ownStart; batchStart < ownEnd;
+         batchStart += blockDim.x) {
+      const int self = batchStart + threadIdx.x;
+      const bool active = self < ownEnd;
+      const glm::vec3 selfPos = active ? pos[self] : glm::vec3(0.0f);
+
+      glm::vec3 perceivedCenter(0.0f);
+      glm::vec3 separation(0.0f);
+      glm::vec3 perceivedVelocity(0.0f);
+      int rule1NeighborCount = 0;
+      int rule3NeighborCount = 0;
+
+      for (int z = imax(0, cellZ - 1);
+           z <= imin(gridResolution - 1, cellZ + 1); ++z) {
+        for (int y = imax(0, cellY - 1);
+             y <= imin(gridResolution - 1, cellY + 1); ++y) {
+          for (int x = imax(0, cellX - 1);
+               x <= imin(gridResolution - 1, cellX + 1); ++x) {
+            const int neighborCell =
+                gridIndex3Dto1D(x, y, z, gridResolution);
+            const int start = gridCellStartIndices[neighborCell];
+            const int end = gridCellEndIndices[neighborCell];
+            if (start < 0 || end < 0) continue;
+
+            for (int tileStart = start; tileStart < end;
+                 tileStart += blockDim.x) {
+              const int tileLength =
+                  imin(static_cast<int>(blockDim.x), end - tileStart);
+
+              if (threadIdx.x < tileLength) {
+                const glm::vec3 p = pos[tileStart + threadIdx.x];
+                const glm::vec3 v = vel1[tileStart + threadIdx.x];
+                sharedPos[threadIdx.x] = make_float3(p.x, p.y, p.z);
+                sharedVel[threadIdx.x] = make_float3(v.x, v.y, v.z);
+              }
+              __syncthreads();
+
+              if (active) {
+                for (int j = 0; j < tileLength; ++j) {
+                  if (tileStart + j == self) continue;
+
+                  const glm::vec3 otherPos(
+                      sharedPos[j].x, sharedPos[j].y, sharedPos[j].z);
+                  const glm::vec3 otherVel(
+                      sharedVel[j].x, sharedVel[j].y, sharedVel[j].z);
+                  const glm::vec3 offset = otherPos - selfPos;
+                  const float distance = glm::length(offset);
+
+                  if (distance < rule1Distance) {
+                    perceivedCenter += otherPos;
+                    ++rule1NeighborCount;
+                  }
+                  if (distance < rule2Distance) separation -= offset;
+                  if (distance < rule3Distance) {
+                    perceivedVelocity += otherVel;
+                    ++rule3NeighborCount;
+                  }
+                }
+              }
+              __syncthreads();
+            }
+          }
+        }
+      }
+
+      if (active) {
+        glm::vec3 velocityChange(0.0f);
+        if (rule1NeighborCount > 0) {
+          perceivedCenter /= static_cast<float>(rule1NeighborCount);
+          velocityChange +=
+              (perceivedCenter - selfPos) * rule1Scale;
+        }
+        velocityChange += separation * rule2Scale;
+        if (rule3NeighborCount > 0) {
+          perceivedVelocity /= static_cast<float>(rule3NeighborCount);
+          velocityChange += perceivedVelocity * rule3Scale;
+        }
+
+        glm::vec3 newVelocity = vel1[self] + velocityChange;
+        const float speed = glm::length(newVelocity);
+        if (speed > maxSpeed)
+          newVelocity = newVelocity / speed * maxSpeed;
+        vel2[self] = newVelocity;
+      }
+    }
+  }
+}
+
 __global__ void kernShufflePosVel(
   int N, int *particleArrayIndices,
   glm::vec3 *pos, glm::vec3 *vel,
@@ -745,7 +861,7 @@ void Boids::stepSimulationScatteredGrid(float dt) {
   dev_vel2 = temp;
 }
 
-void Boids::stepSimulationCoherentGrid(float dt) {
+static void stepSimulationCoherentGridImpl(float dt, bool useSharedMemory) {
   // TODO-2.3 - start by copying Boids::stepSimulationNaiveGrid
   // Uniform Grid Neighbor search using Thrust sort on cell-coherent data.
   // In Parallel:
@@ -790,17 +906,29 @@ void Boids::stepSimulationCoherentGrid(float dt) {
     numObjects, dev_particleArrayIndices,
     dev_pos, dev_vel1, dev_pos2, dev_vel2);
 
-  kernUpdateVelNeighborSearchCoherent<<<fullBlocksPerGrid, blockSize>>>(
-    numObjects,
-    gridSideCount,
-    gridMinimum,
-    gridInverseCellWidth,
-    gridCellWidth,
-    dev_gridCellStartIndices,
-    dev_gridCellEndIndices,
-    dev_pos2,
-    dev_vel2,
-    dev_vel1);
+  if (useSharedMemory) {
+    const int cellBlocks = imin(
+        gridCellCount, imax(1, 2 * static_cast<int>(fullBlocksPerGrid.x)));
+    const size_t sharedBytes =
+        2 * blockSize * sizeof(float3);
+    kernUpdateVelNeighborSearchCoherentShared
+        <<<cellBlocks, blockSize, sharedBytes>>>(
+            gridSideCount, gridCellCount,
+            dev_gridCellStartIndices, dev_gridCellEndIndices,
+            dev_pos2, dev_vel2, dev_vel1);
+  } else {
+    kernUpdateVelNeighborSearchCoherent<<<fullBlocksPerGrid, blockSize>>>(
+      numObjects,
+      gridSideCount,
+      gridMinimum,
+      gridInverseCellWidth,
+      gridCellWidth,
+      dev_gridCellStartIndices,
+      dev_gridCellEndIndices,
+      dev_pos2,
+      dev_vel2,
+      dev_vel1);
+  }
 
   kernUpdatePos<<<fullBlocksPerGrid, blockSize>>>(
     numObjects, dt, dev_pos2, dev_vel1);
@@ -810,6 +938,14 @@ void Boids::stepSimulationCoherentGrid(float dt) {
   dev_pos2 = temp;
 
   checkCUDAErrorWithLine("stepSimulationCoherentGrid failed!");
+}
+
+void Boids::stepSimulationCoherentGrid(float dt) {
+  stepSimulationCoherentGridImpl(dt, false);
+}
+
+void Boids::stepSimulationCoherentGridShared(float dt) {
+  stepSimulationCoherentGridImpl(dt, true);
 }
 
 void Boids::endSimulation() {
